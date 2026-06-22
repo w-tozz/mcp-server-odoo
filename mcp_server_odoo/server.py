@@ -6,6 +6,7 @@ and functionality through the Model Context Protocol.
 
 import asyncio
 import contextlib
+import os
 from typing import Any, Dict, Optional
 
 from mcp.server import FastMCP
@@ -77,6 +78,11 @@ class OdooMCPServer:
             lifespan=self._odoo_lifespan,
             host=self.config.host,
             transport_security=transport_security,
+            # Mount path for streamable-http. Default "/mcp"; set to "/" when
+            # fronted by a proxy that forwards the root path (e.g. obot
+            # mcp-oauth-proxy). The FastMCP __init__ kwarg overrides the env
+            # default, so we read the env explicitly here.
+            streamable_http_path=os.getenv("FASTMCP_STREAMABLE_HTTP_PATH", "/mcp"),
         )
 
         @self.app.custom_route("/health", methods=["GET"])
