@@ -1,0 +1,62 @@
+services:
+  mcp-server-odoo:
+    build: .
+    # Image construite localement depuis le Dockerfile du repo.
+    # Si tu préfères publier sur ghcr, remplace `build: .` par `image: ...`.
+    container_name: mcp-server-odoo
+    restart: unless-stopped
+
+    # Toutes les variables Odoo + transport sont lues depuis .env (jamais commité).
+    env_file:
+      - .env
+
+    # On force le transport HTTP et le bind sur 0.0.0.0 pour que Traefik
+    # (autre container) puisse joindre le service via le réseau Docker.
+    # Ces valeurs ont priorité sur .env pour éviter une mauvaise config.
+    environment:
+      ODOO_MCP_TRANSPORT: streamable-http
+      ODOO_MCP_HOST: 0.0.0.0
+      ODOO_MCP_PORT: "8000"
+
+    # PAS de `ports:` => rien n'est exposé directement sur le VPS.
+    # Seul Traefik, via le réseau partagé, route vers le port 8000 interne.
+
+    networks:
+      - traefik
+      - default
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health').status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+    labels:
+      - "traefik.enable=true"
+      # Réseau Docker sur lequel Traefik doit parler au container
+      - "traefik.docker.network=${TRAEFIK_NETWORK}"
+
+      # --- Router HTTPS ---
+      - "traefik.http.routers.mcp-odoo.rule=Host(`${MCP_DOMAIN}`)"
+      - "traefik.http.routers.mcp-odoo.entrypoints=websecure"
+      - "traefik.http.routers.mcp-odoo.tls=true"
+      - "traefik.http.routers.mcp-odoo.tls.certresolver=${TRAEFIK_CERTRESOLVER}"
+
+      # --- Service (port interne du MCP) ---
+      - "traefik.http.services.mcp-odoo.loadbalancer.server.port=8000"
+
+      # --- Basic Auth (le transport MCP n'a AUCUNE auth intégrée) ---
+      # MCP_BASIC_AUTH = sortie de `htpasswd -nbB user 'motdepasse'`
+      # (les $ doivent être doublés en $$ dans le .env, voir .env.example)
+      - "traefik.http.middlewares.mcp-odoo-auth.basicauth.users=${MCP_BASIC_AUTH}"
+      - "traefik.http.routers.mcp-odoo.middlewares=mcp-odoo-auth"
+
+networks:
+  # Réseau externe déjà créé par ta stack Traefik.
+  # Le nom réel est injecté via ${TRAEFIK_NETWORK} dans .env.
+  traefik:
+    external: true
+    name: ${TRAEFIK_NETWORK}
+  default:
+    driver: bridge
